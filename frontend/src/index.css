@@ -1,0 +1,4 @@
+/* Ensure Tailwind CSS is properly set up in your build process for these directives to work */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

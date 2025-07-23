@@ -1,4 +1,4 @@
-import fitz  # PyMuPDF
+import fitz
 from typing import Union
 from io import BytesIO
 

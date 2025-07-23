@@ -5,4 +5,4 @@ def test_extract_text_from_pdf():
         content = f.read()
     text = extract_text_from_pdf(content)
     assert len(text) > 20
-    assert "Agreement" in text  # example keyword
+    assert "Agreement" in text
