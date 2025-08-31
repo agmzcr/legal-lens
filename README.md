@@ -7,7 +7,8 @@ LegalLens is a full-stack web application that uses AI to help users analyze leg
 ## 🚀 Features
 
 ### 🌐 Frontend (React + Vite)
-- **Authentication**: Login and registration with token-based session management.
+- **Authentication**: Login and registration with JWT-based token management.
+- **Data Management**: Robust data fetching, caching, and state management using TanStack Query.
 - **Dashboard**: View, search, and delete uploaded documents.
 - **PDF Upload Modal**: Drag-and-drop interface for uploading and analyzing documents.
 - **Chat Panel**: Ask contextual questions about any document with natural-language responses.
@@ -26,14 +27,14 @@ LegalLens is a full-stack web application that uses AI to help users analyze leg
 
 ## 📁 Tech Stack
 
-| Layer      | Technology                           |
-|------------|--------------------------------------|
-| Frontend   | React 19, Vite, TypeScript, Zustand  |
-| UI/UX      | TailwindCSS, React Icons, Hot Toast  |
-| Backend    | FastAPI, SQLModel, PyMuPDF           |
-| AI Engine  | OpenRouter API (LLM: mistral-7b)     |
-| Auth       | JWT + Bcrypt + Secure Dependencies   |
-| Database   | SQL (via SQLModel ORM)               |
+| Layer      | Technology                                  |
+|------------|---------------------------------------------|
+| Frontend   | React 19, Vite, TypeScript, TanStack Query  |
+| UI/UX      | TailwindCSS, React Icons, Hot Toast         |
+| Backend    | FastAPI, SQLModel, PyMuPDF                  |
+| AI Engine  | OpenRouter API (LLM: mistral-7b)            |
+| Auth       | JWT + Bcrypt + Secure Dependencies          |
+| Database   | SQL (via SQLModel ORM)                      |
 
 ---
 
@@ -87,15 +88,19 @@ Access the app at: `http://localhost:5173`
 ### Auth Routes (`/auth`)
 - `POST /register`: Create a new account.
 - `POST /login`: Login and receive JWT token.
+- `POST /refresh`: Refresh a JWT token.
 
-### Document Routes (`/document`)
+### User Routes (/users)
+- `GET /me`: Get the currently logged-in user's details.
+
+### Document Routes (`/documents`)
 - `POST /upload`: Upload a PDF, extract and analyze.
 - `GET /{doc_id}`: Get full details of a document.
-- `GET /documents`: List all user documents.
+- `GET /`: List all user documents.
 - `DELETE /{doc_id}`: Remove a document.
 
-### AI Routes (`/ai/chat`)
-- `POST`: Ask questions about a document using context.
+### AI Routes (`/ai`)
+- `POST /chat`: Ask questions about a document using context.
 
 ---
 
