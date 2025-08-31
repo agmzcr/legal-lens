@@ -1,45 +1,56 @@
-"""
-AI Chat Endpoint Module
-
-Defines an API route that allows authenticated users to ask questions 
-about a legal document using an AI-powered assistant.
-"""
-
-from fastapi import APIRouter, Body, Depends, HTTPException, status
-from app.auth.deps import get_current_user
-from app.services.ai_engine import ask_ai_about_document
+import logging
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from app.db.session import get_session
+from app.services.chat_service import ChatService
+from app.services.ai_engine import AIEngineService
+from app.services.document_service import DocumentService
+from app.api.deps import get_current_user, get_document_service, get_ai_engine_service
 from app.models.user import User
+from app.schemas.ai_chat import ChatRequest, ChatResponse
+from app.core.exceptions import DocumentNotFoundError, AIEngineError
 
-# Initialize the router
-router = APIRouter()
+logger = logging.getLogger(__name__)
 
-@router.post("/ai/chat")
-def chat_with_ai(
-    payload: dict = Body(...),
-    current_user: User = Depends(get_current_user)
+router = APIRouter(prefix="/ai/chat", tags=["chat"])
+
+@router.post("/", response_model=ChatResponse)
+def get_chat_response(
+    request: ChatRequest,
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_session),
+    ai_engine_service: AIEngineService = Depends(get_ai_engine_service),
+    document_service: DocumentService = Depends(get_document_service),
 ):
     """
-    Interacts with the AI to analyze and answer questions based on a document context.
-
-    Parameters:
-    - payload (dict): Should include 'context' (document text) and 'question' (user's query)
-    - current_user (User): Automatically injected authenticated user
-
-    Returns:
-    - dict: Contains AI-generated 'answer' string
+    Retrieves a contextual response from the AI for a given document.
     """
-    # Extract document text and user question from payload
-    text = payload.get("context", "")
-    question = payload.get("question", "")
-
-    # Validate input
-    if not text or not question:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Both 'context' and 'question' fields are required."
+    chat_service = ChatService(
+        db=db,
+        ai_engine_service=ai_engine_service,
+        document_service=document_service
+    )
+    
+    try:
+        response = chat_service.get_chat_response(
+            document_id=request.document_id,
+            user_id=current_user.id,
+            message=request.message
         )
-
-    # Generate response using AI engine
-    answer = ask_ai_about_document(text, question)
-
-    return {"answer": answer}
+        return ChatResponse(response=response["response"])
+    except DocumentNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except AIEngineError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Unexpected error in chat endpoint: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred."
+        )

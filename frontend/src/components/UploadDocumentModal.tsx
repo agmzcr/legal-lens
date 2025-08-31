@@ -4,7 +4,8 @@ import {
   type DragEvent,
   type ChangeEvent,
 } from 'react';
-import axios from 'axios';
+import { apiFetch } from '../lib/apiFetch';
+import toast from 'react-hot-toast';
 import {
   HiOutlineUpload,
   HiCloudUpload,
@@ -23,11 +24,10 @@ type Props = {
  * - Error handling and upload result callback
  */
 export default function UploadModal({ onClose, onComplete }: Props) {
-  const [file, setFile] = useState<File | null>(null);          // Selected file
-  const [error, setError] = useState('');                       // Upload error
-  const [loading, setLoading] = useState(false);                // Upload status
-  const [dragActive, setDragActive] = useState(false);          // Drag hover state
-  const fileInputRef = useRef<HTMLInputElement>(null);          // Hidden input trigger
+  const [file, setFile] = useState<File | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Handle drag-over event
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
@@ -48,7 +48,6 @@ export default function UploadModal({ onClose, onComplete }: Props) {
     const droppedFile = e.dataTransfer.files?.[0];
     if (droppedFile) {
       setFile(droppedFile);
-      setError('');
     }
   };
 
@@ -56,7 +55,6 @@ export default function UploadModal({ onClose, onComplete }: Props) {
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const chosenFile = e.target.files?.[0] || null;
     setFile(chosenFile);
-    setError('');
   };
 
   // Upload file to backend
@@ -67,29 +65,26 @@ export default function UploadModal({ onClose, onComplete }: Props) {
     formData.append('file', file);
 
     setLoading(true);
-    setError('');
 
     try {
-      const token = localStorage.getItem('token');
-      const res = await axios.post(
-        'http://localhost:8000/document/upload',
-        formData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'multipart/form-data',
-          },
-        }
-      );
-
+      // The browser automatically attaches authentication cookies thanks to `withCredentials`
+      const res = await apiFetch({
+        method: 'post',
+        url: '/documents/', 
+        data: formData,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      
       const docId = res.data?.id;
       if (docId) {
+        toast.success('Document uploaded successfully!');
         onComplete(docId); // Trigger parent callback
       } else {
-        setError('Could not retrieve document ID');
+        throw new Error('Could not retrieve document ID from response.');
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Error uploading document');
+      const errorMessage = err.response?.data?.detail || 'Error uploading document. Please try again.';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -116,7 +111,7 @@ export default function UploadModal({ onClose, onComplete }: Props) {
           {loading ? (
             <>
               <HiOutlineUpload className="w-10 h-10 text-blue-600 animate-spin mx-auto" />
-              <p className="mt-2 text-blue-600 font-medium">Analyzing…</p>
+              <p className="mt-2 text-blue-600 font-medium">Analyzing...</p>
             </>
           ) : file ? (
             <>
@@ -146,11 +141,6 @@ export default function UploadModal({ onClose, onComplete }: Props) {
             className="hidden"
           />
         </div>
-
-        {/* Display error if any */}
-        {error && (
-          <p className="text-red-600 text-sm text-center">{error}</p>
-        )}
 
         {/* Cancel button */}
         <div className="flex justify-end gap-2">

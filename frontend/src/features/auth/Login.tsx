@@ -1,53 +1,45 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { useAuth } from '../../lib/auth';
+import toast from 'react-hot-toast';
 
 /**
  * Login page component for LegalLens.
- * Features:
- * - Vertical and horizontal centering
- * - Smooth UI and input handling
- * - Authentication via API and token storage
  */
 
 export default function Login() {
-  // State for form inputs and error message
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const { login } = useAuth();
   const navigate = useNavigate();
 
-  // Submit handler for login form
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      // Send login request
-      const response = await axios.post('http://localhost:8000/auth/login', {
-        email,
-        password,
-      });
+    setIsLoading(true);
 
-      // Extract token and store it locally
-      const { access_token } = response.data;
-      localStorage.setItem('token', access_token);
-      setError('');
-      navigate('/dashboard'); // Redirect to dashboard
+    try {
+      await login({ email, password });
+      toast.success('Login successful!');
+      navigate('/dashboard');
     } catch (err: any) {
-      // Show error message if authentication fails
-      setError(err.response?.data?.detail || 'Login failed');
+      const errorMessage = err.response?.data?.detail || 'Login failed. Please check your credentials.';
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
     <main className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
       <div className="w-full max-w-md bg-white rounded-xl shadow-md p-8">
-        {/* Page title */}
+        {/* Heading */}
         <h2 className="text-3xl font-bold text-center text-gray-800 mb-6">
           Sign In to LegalLens
         </h2>
-
-        {/* Login form */}
+        {/* Login Form */}
         <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Email input */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Email
@@ -61,7 +53,7 @@ export default function Login() {
               required
             />
           </div>
-
+          {/* Password input */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Password
@@ -75,20 +67,16 @@ export default function Login() {
               required
             />
           </div>
-
-          {/* Show error if present */}
-          {error && <p className="text-red-600 text-sm">{error}</p>}
-
           {/* Submit button */}
           <button
             type="submit"
-            className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700 transition duration-200"
+            disabled={isLoading}
+            className="w-full bg-blue-600 text-white font-semibold py-2 rounded-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Log In
+            {isLoading ? 'Signing In...' : 'Log In'}
           </button>
         </form>
-
-        {/* Link to registration page */}
+        {/* Navigation link to register */}
         <p className="mt-4 text-center text-sm text-gray-600">
           Don't have an account?{' '}
           <a href="/register" className="text-blue-600 hover:underline">

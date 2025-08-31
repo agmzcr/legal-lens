@@ -7,6 +7,7 @@ import DocumentList from "./features/dashboard/DocumentList";
 import DashboardLayout from "./features/dashboard/DashboardLayout";
 import PrivateRoute from "./components/PrivateRoute";
 import { Toaster } from "react-hot-toast";
+import { AuthProvider } from "./lib/auth";
 
 /**
  * Root component of the LegalLens Single Page Application (SPA).
@@ -14,7 +15,8 @@ import { Toaster } from "react-hot-toast";
  */
 export default function App() {
   return (
-    <>
+
+    <AuthProvider>
       <Routes>
         {/* Public routes */}
         <Route path="/" element={<Home />} />
@@ -53,6 +55,6 @@ export default function App() {
           },
         }}
       />
-    </>
+    </AuthProvider>
   );
 }

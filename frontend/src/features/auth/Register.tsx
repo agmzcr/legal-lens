@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import toast from 'react-hot-toast';
+
+import { apiFetch } from '../../lib/apiFetch';
 
 /**
  * User registration page for LegalLens.
@@ -11,28 +13,40 @@ import axios from 'axios';
  */
 
 export default function Register() {
-  // Form state variables
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
 
-  // Handle form submission
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
+    
+    if (password !== confirmPassword) {
+      setError("Passwords do not match. Please try again.");
+      return;
+    }
+
+    setIsLoading(true);
+
     try {
-      // Send registration request to backend
-      await axios.post('http://localhost:8000/auth/register', {
-        email,
-        password,
+      await apiFetch({
+        method: 'post',
+        url: '/auth/register',
+        data: { email, password },
       });
 
-      setError('');
-      alert('Registration successful');
-      navigate('/login'); // Redirect to login page
+      toast.success('Registration successful. You can now log in.');
+      navigate('/login');
     } catch (err: any) {
-      // Show error message from server or default message
-      setError(err.response?.data?.detail || 'Registration failed');
+
+      const errorMessage = err.response?.data?.detail || 'Registration failed. Please try again.';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -76,15 +90,31 @@ export default function Register() {
             />
           </div>
 
+          {/* Password confirmation input */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Confirm Password
+            </label>
+            <input
+              type="password"
+              placeholder="••••••••"
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+            />
+          </div>
+
           {/* Error message */}
           {error && <p className="text-red-600 text-sm">{error}</p>}
 
           {/* Submit button */}
           <button
             type="submit"
-            className="w-full bg-green-600 text-white font-semibold py-2 rounded-lg hover:bg-green-700 transition duration-200"
+            disabled={isLoading}
+            className="w-full bg-green-600 text-white font-semibold py-2 rounded-lg hover:bg-green-700 transition duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Sign Up
+            {isLoading ? "Signing Up..." : "Sign Up"}
           </button>
         </form>
 

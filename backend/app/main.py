@@ -3,7 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.document_routes import router as document_router
 from app.api.auth_routes import router as auth_router
 from app.api.chat_routes import router as chat_router
-from app.db.init_db import init_db
+from app.api.users_routes import router as users_router
+import sys
+import logging
+
+logging.basicConfig(level=logging.ERROR)
+
+print("[DEBUG] Python executable:", sys.executable)
 
 app = FastAPI(
     title="LegalLens API",
@@ -22,7 +28,4 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(document_router)
 app.include_router(chat_router)
-
-@app.on_event("startup")
-def on_startup():
-    init_db()
+app.include_router(users_router)

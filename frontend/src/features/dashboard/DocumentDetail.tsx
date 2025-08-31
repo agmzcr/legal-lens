@@ -1,6 +1,5 @@
-import { useParams, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
-import axios from "axios";
+import { useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
 import {
   HiOutlineChat,
@@ -13,130 +12,107 @@ import {
 
 import PageHeader from "../../components/PageHeader";
 import DocumentChatPanel from "../../components/DocumentChatPanel";
-import toast from "react-hot-toast";
+import { apiFetch } from "../../lib/apiFetch";
+import { useDeleteDocument } from "../../hooks/useDeleteDocument";
+import type { Document } from "../../types/document"; 
+import { useState } from "react";
 
 /**
  * DocumentDetail component
- * Displays the full details of a selected legal document including summary, clauses, flags,
- * and full content. Also includes AI-assisted chat and delete functionality.
+ * Displays the full details of a selected legal document.
  */
 export default function DocumentDetail() {
   const { docId } = useParams<{ docId: string }>();
-  const [doc, setDoc] = useState<any>(null); // Document object
-  const [error, setError] = useState("");    // Error message state
-  const [chatOpen, setChatOpen] = useState(false); // Toggle for AI chat
-  const navigate = useNavigate();
+  
+  // Use the custom hook for deletion logic
+  const { deleteDocument, isDeleting } = useDeleteDocument();
+  
+  // State for controlling the chat panel, correctly placed
+  const [chatOpen, setChatOpen] = useState(false);
 
-  // Fetch a document by ID when component mounts
-  useEffect(() => {
-    const fetchDoc = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        const response = await axios.get(`http://localhost:8000/document/${docId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setDoc(response.data);
-      } catch (err: any) {
-        setError("Failed to load document");
-      }
-    };
+  // Use useQuery to handle data fetching, caching, and errors
+  const { data: doc, isLoading, error } = useQuery<Document>({
+    queryKey: ['document', docId],
+    queryFn: async () => {
+      // Use the centralized apiFetch to make the authenticated request
+      const response = await apiFetch.get(`/documents/${docId}`);
+      return response.data; // Axios returns the data in the .data property
+    },
+    enabled: !!docId,
+  });
 
-    fetchDoc();
-  }, [docId]);
+  // Document deletion handler
+  const handleDelete = async () => {
+    if (!doc || !docId) return;
+    deleteDocument(docId);
+  };
 
-  // Handle document deletion with undo option
-  const handleDelete = () => {
-    const token = localStorage.getItem("token");
-    let wasUndone = false;
-
-    // Show toast with Undo option
-    toast(
-      (t) => (
-        <div className="flex items-center justify-between space-x-2">
-          <span className="text-sm text-gray-800">
-            ⏳ Deleting: <strong>{doc.title}</strong>
-          </span>
-          <button
-            onClick={() => {
-              wasUndone = true;
-              setDoc(doc); // Restore document if undo triggered
-              toast.dismiss(t.id);
-            }}
-            className="text-red-600 text-sm font-medium hover:underline"
-          >
-            Undo
-          </button>
-        </div>
-      ),
-      { duration: 5000 }
-    );
-
-    // Final deletion after delay (if not undone)
-    setTimeout(async () => {
-      if (!wasUndone) {
-        try {
-          await axios.delete(`http://localhost:8000/document/${doc.id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          toast.success(`"${doc.title}" deleted`);
-          navigate("/documents");
-        } catch (err) {
-          toast.error(`Failed to delete "${doc.title}"`);
-          setDoc(doc); // Restore if deletion fails
-        }
-      }
-    }, 5000);
-  };
-
-  // Display error if failed to fetch
-  if (error)
-    return <p className="text-red-600 text-center mt-8 text-lg">{error}</p>;
-
-  // Show loading message until document is available
-  if (!doc)
+  // Conditional rendering based on loading state
+  if (isLoading) {
     return (
       <p className="text-gray-500 text-center mt-8 text-lg">
         Loading document...
       </p>
     );
+  }
+
+  if (error) {
+    return (
+      <p className="text-red-600 text-center mt-8 text-lg">
+        Failed to load document.
+      </p>
+    );
+  }
+
+  if (!doc) {
+    return (
+      <p className="text-gray-500 text-center mt-8 text-lg">
+        Document not found.
+      </p>
+    );
+  }
 
   return (
-    <article className="space-y-6 px-4 sm:px-6 lg:px-8">
-      {/* Header with delete button */}
+    <article className="space-y-8 px-2 sm:px-8 lg:px-24 py-8 bg-gray-50 min-h-screen animate-fade-in">
+      {/* Header with dynamic title and delete button */}
       <PageHeader
         title={doc.title}
         actionButton={
           <button
             onClick={handleDelete}
-            className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700 transition"
+            disabled={isDeleting}
+            className="flex items-center gap-2 bg-red-600 text-white px-5 py-2 rounded-full shadow hover:bg-red-700 transition font-semibold text-base disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <HiOutlineTrash className="w-5 h-5 inline-block mr-2" />
-            Delete Document
+            <HiOutlineTrash className="w-5 h-5" />
+            {isDeleting ? "Deleting..." : "Delete Document"}
           </button>
         }
       />
 
       {/* Summary Section */}
-      <section className="bg-white p-5 rounded-lg shadow-sm mb-6">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <HiOutlineBookOpen className="text-blue-500 w-6 h-6" />
+      <section className="bg-white/80 backdrop-blur p-6 rounded-2xl shadow-lg border border-blue-100 mb-8 animate-fade-in">
+        <h2 className="text-2xl font-bold text-blue-700 mb-3 flex items-center gap-3">
+          <HiOutlineBookOpen className="text-blue-400 w-7 h-7" />
           Summary
         </h2>
-        <p className="text-gray-700 leading-relaxed">{doc.summary}</p>
+        <p className="text-gray-700 text-lg leading-relaxed">{doc.summary}</p>
       </section>
 
       {/* Key Clauses Section */}
       {doc.clauses?.length > 0 && (
-        <section className="bg-white p-5 rounded-lg shadow-sm mb-6">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-            <HiOutlineClipboardList className="text-blue-500 w-6 h-6" />
+        <section className="bg-white/80 backdrop-blur p-6 rounded-2xl shadow-lg border border-blue-100 mb-8 animate-fade-in">
+          <h2 className="text-2xl font-bold text-blue-700 mb-3 flex items-center gap-3">
+            <HiOutlineClipboardList className="text-blue-400 w-7 h-7" />
             Key Clauses
           </h2>
-          <ul className="divide-y divide-gray-200">
-            {doc.clauses.map((clause: any, idx: number) => (
-              <li key={idx} className="py-3">
-                <h4 className="font-medium text-gray-700">{clause.title}</h4>
-                <p className="text-sm text-gray-600 mt-1">{clause.content}</p>
+          <ul className="divide-y divide-blue-100">
+            {doc.clauses.map((clause, idx) => (
+              <li key={idx} className="py-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="inline-block w-2 h-2 bg-blue-400 rounded-full"></span>
+                  <h4 className="font-semibold text-gray-800 text-base">{clause.title}</h4>
+                </div>
+                <p className="text-gray-600 text-sm pl-4 border-l-2 border-blue-100">{clause.content}</p>
               </li>
             ))}
           </ul>
@@ -145,26 +121,26 @@ export default function DocumentDetail() {
 
       {/* Red Flags Section */}
       {doc.red_flags?.length > 0 && (
-        <section className="bg-white p-5 rounded-lg shadow-sm mb-6 border-l-4 border-red-500">
-          <h2 className="text-xl font-semibold text-red-600 mb-2 flex items-center gap-2">
-            <HiExclamationCircle />
+        <section className="bg-white/80 backdrop-blur p-6 rounded-2xl shadow-lg border border-red-200 mb-8 animate-fade-in">
+          <h2 className="text-2xl font-bold text-red-600 mb-3 flex items-center gap-3">
+            <HiExclamationCircle className="text-red-400 w-7 h-7" />
             Red Flags
           </h2>
-          <ul className="list-disc list-inside text-red-700 space-y-1 text-sm">
-            {doc.red_flags.map((flag: string, idx: number) => (
-              <li key={idx}>{flag}</li>
+          <ul className="list-disc list-inside text-red-700 space-y-2 text-base pl-4">
+            {doc.red_flags.map((flag, idx) => (
+              <li key={idx} className="bg-red-50 rounded px-2 py-1 border border-red-100 shadow-sm">{flag}</li>
             ))}
           </ul>
         </section>
       )}
 
       {/* Full Content Section */}
-      <section className="bg-white p-5 rounded-lg shadow-sm">
-        <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-          <HiOutlineDocumentText className="text-blue-500 w-6 h-6" />
+      <section className="bg-white/80 backdrop-blur p-6 rounded-2xl shadow-lg border border-blue-100 animate-fade-in">
+        <h2 className="text-2xl font-bold text-blue-700 mb-3 flex items-center gap-3">
+          <HiOutlineDocumentText className="text-blue-400 w-7 h-7" />
           Full Content
         </h2>
-        <div className="text-gray-700 whitespace-pre-wrap text-sm leading-relaxed max-h-[60vh] overflow-y-auto border border-gray-200 rounded p-4">
+        <div className="text-gray-700 whitespace-pre-wrap text-base leading-relaxed max-h-[60vh] overflow-y-auto border border-blue-100 rounded-xl p-4 bg-blue-50/40 custom-scrollbar">
           {doc.content}
         </div>
       </section>
@@ -173,14 +149,14 @@ export default function DocumentDetail() {
       <>
         <button
           onClick={() => setChatOpen(true)}
-          className="fixed bottom-6 right-6 bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 z-50"
+          className="fixed bottom-8 right-8 bg-blue-600 text-white p-5 rounded-full shadow-xl hover:bg-blue-700 transition z-50 border-4 border-white"
         >
-          <HiOutlineChat className="w-6 h-6" />
+          <HiOutlineChat className="w-7 h-7" />
         </button>
 
         {chatOpen && (
           <DocumentChatPanel
-            context={doc.content}
+            documentId={doc.id}
             onClose={() => setChatOpen(false)}
           />
         )}

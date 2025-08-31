@@ -1,75 +1,107 @@
-"""
-Authentication Routes Module
-
-Handles user registration and login processes.
-Returns a JWT access token upon successful authentication.
-"""
-
-from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
-
+from sqlalchemy.orm import Session
 from app.db.session import get_session
-from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin, TokenResponse
-from app.auth.auth_handler import (
-    SECRET_KEY,
-    hash_password,
-    verify_password,
-    create_access_token,
+from app.services.user_service import UserService
+from app.services.auth_service import AuthService
+from app.schemas.user import UserCreate, UserLogin
+from app.schemas.token import Token
+from app.core.exceptions import (
+    UserAlreadyExistsError,
+    InvalidCredentialsError,
+    RefreshTokenExpiredError,
+    DatabaseError
 )
 
-# Initialize auth router with a prefix
-router = APIRouter(prefix="/auth")
+router = APIRouter(prefix="/auth", tags=["Auth"])
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-def register(user: UserCreate, session: Session = Depends(get_session)):
-    """
-    Registers a new user.
+def get_user_service(db: Session = Depends(get_session)) -> UserService:
+    """Provides an instance of UserService with a database session."""
+    return UserService(db)
 
-    - Validates that the email is not already in use.
-    - Hashes the password before storing.
-    - Returns a JWT access token.
+def get_auth_service(
+    db: Session = Depends(get_session),
+    user_service: UserService = Depends(get_user_service)
+) -> AuthService:
+    """Provides an instance of AuthService with a database session and a UserService instance."""
+    return AuthService(db, user_service)
+
+
+@router.post(
+    "/register",
+    response_model=Token,
+    status_code=status.HTTP_201_CREATED,
+    summary="Register a new user"
+)
+def register_user(
+    user_data: UserCreate,
+    auth_service: AuthService = Depends(get_auth_service)
+):
     """
-    # Check if user already exists
-    db_user = session.exec(select(User).where(User.email == user.email)).first()
-    if db_user:
+    Registers a new user, creates a refresh token, and returns an access token.
+    """
+    try:
+        user = auth_service.register_user(user_data)
+        tokens = auth_service.create_tokens_for_user(user.id)
+        return tokens
+    except UserAlreadyExistsError as e:
         raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e)
+        )
+    except DatabaseError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
 
-    # Create and persist new user
-    new_user = User(
-        email=user.email,
-        hashed_password=hash_password(user.password)
-    )
-    session.add(new_user)
-    session.commit()
-    session.refresh(new_user)
 
-    # Generate JWT token
-    token = create_access_token({"sub": str(new_user.id)})
-    return TokenResponse(access_token=token)
-
-@router.post("/login", response_model=TokenResponse)
-def login(user: UserLogin, session: Session = Depends(get_session)):
+@router.post(
+    "/login",
+    response_model=Token,
+    summary="Log in an existing user"
+)
+def login_for_access_token(
+    user_data: UserLogin,
+    auth_service: AuthService = Depends(get_auth_service)
+):
     """
-    Authenticates user credentials.
-
-    - Verifies email and password.
-    - Returns a JWT access token on success.
+    Authenticates a user and returns access and refresh tokens.
     """
-    # Fetch user by email
-    db_user = session.exec(select(User).where(User.email == user.email)).first()
-
-    # Validate credentials
-    if not db_user or not verify_password(user.password, db_user.hashed_password):
+    try:
+        user = auth_service.authenticate_user(user_data.email, user_data.password)
+        tokens = auth_service.create_tokens_for_user(user.id)
+        return tokens
+    except InvalidCredentialsError as e:
         raise HTTPException(
-            status_code=401,
-            detail="Invalid credentials"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except DatabaseError as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
         )
 
-    # Generate JWT token
-    token = create_access_token({"sub": str(db_user.id)})
-    return TokenResponse(access_token=token)
+@router.post(
+    "/refresh",
+    response_model=Token,
+    summary="Refresh an access token"
+)
+def refresh_access_token(
+    refresh_token: str,
+    auth_service: AuthService = Depends(get_auth_service)
+):
+    """
+    Refreshes the access token using a refresh token.
+    """
+    try:
+        user_id = auth_service.verify_refresh_token(refresh_token)
+        tokens = auth_service.create_tokens_for_user(user_id)
+        return tokens
+    except RefreshTokenExpiredError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )

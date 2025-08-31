@@ -1,139 +1,97 @@
-"""
-AI Engine Module
-
-Provides utility functions to interact with OpenRouter's AI API.
-Includes:
-- Document analysis (summary, clauses, red flags)
-- Question answering based on document context
-"""
-
-import os
 import json
+import logging
 import httpx
-from dotenv import load_dotenv
-from app.schemas.analysis import DocumentAnalysis, Clause
 
-# Load environment variables
-load_dotenv()
+from app.config import settings
+from app.schemas.document import DocumentSummary
+from app.core.exceptions import AIEngineError
 
-# Configuration
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
-LLM_MODEL = "mistralai/mistral-7b-instruct:free"
+logger = logging.getLogger(__name__)
 
-def build_prompt(text: str) -> str:
-    """
-    Constructs an instruction prompt for document analysis.
+class AIEngineService:
+    def __init__(self):
+        self._api_key = settings.OPENROUTER_API_KEY
+        self._base_url = settings.OPENROUTER_BASE_URL
+        self._llm_model = settings.LLM_MODEL
+        self._headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://yourdomain.com",  # Custom domain for tracing
+            "X-Title": "LegalLens"
+        }
 
-    Args:
-        text (str): Raw document content
+    def _send_request(self, messages: list[dict]) -> dict:
+        """
+        Sends a request to the OpenRouter API and handles potential errors.
+        """
+        payload = {
+            "model": self._llm_model,
+            "messages": messages
+        }
 
-    Returns:
-        str: AI-friendly instruction prompt
-    """
-    return f"""
-You are a legal assistant AI. Analyze the following legal document and return:
-1. A short executive summary (max 5 lines).
-2. A list of key clauses (title and short explanation).
-3. A list of any potential red flags or legal risks.
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(self._base_url, headers=self._headers, json=payload)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as exc:
+            logger.error(f"HTTP error with AI engine: {exc.response.status_code} - {exc.response.text}")
+            raise AIEngineError(f"AI service returned an error: {exc.response.status_code}") from exc
+        except httpx.RequestError as exc:
+            logger.error(f"Network error communicating with AI engine: {exc}")
+            raise AIEngineError("Network error connecting to AI service.") from exc
+        except Exception as exc:
+            logger.error(f"Unexpected error with AI engine request: {exc}")
+            raise AIEngineError("An unexpected error occurred with the AI service.") from exc
 
-Document:
-\"\"\"
-{text}
-\"\"\"
+    def analyze_text_with_ai(self, text: str) -> DocumentSummary:
+        """
+        Sends document text to the AI model for legal analysis.
+        """
+        prompt = f"""
+        You are a legal assistant AI. Analyze the following legal document and return a JSON object with a summary, key clauses, and potential red flags.
 
-Respond in JSON format with keys: summary, clauses (list of objects with title/content), red_flags (list of strings).
-"""
+        Document:
+        \"\"\"
+        {text}
+        \"\"\"
 
-def analyze_text_with_ai(text: str) -> DocumentAnalysis:
-    """
-    Sends document text to the AI model for legal analysis.
+        Respond in JSON format with keys: `summary` (string, max 5 lines), `clauses` (list of objects with `title` and `content`), and `red_flags` (list of strings).
+        """
+        messages = [{"role": "user", "content": prompt}]
+        response_json = self._send_request(messages)
+        content = response_json["choices"][0]["message"]["content"]
+        
+        try:
+            parsed = json.loads(content)
+            return {
+                "summary": parsed.get("summary", ""),
+                "clauses": parsed.get("clauses", []),
+                "red_flags": parsed.get("red_flags", [])
+            }
+        except json.JSONDecodeError as exc:
+            logger.error(f"Failed to parse AI response as JSON: {content}")
+            raise AIEngineError("The AI response could not be parsed.") from exc
 
-    Args:
-        text (str): Full legal document content
+    def get_ai_response(self, text: str, question: str) -> str:
+        """
+        Submits a question about a document to the AI model.
+        """
+        prompt = f"""
+        You are a legal assistant AI. Answer the following question based only on the document provided. Do not use outside knowledge.
 
-    Returns:
-        DocumentAnalysis: Parsed summary, clauses, and red flags
-    """
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://yourdomain.com",  # Custom domain for tracing
-        "X-Title": "LegalLens"
-    }
+        Document:
+        \"\"\"
+        {text}
+        \"\"\"
 
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [{"role": "user", "content": build_prompt(text)}]
-    }
+        Question:
+        \"\"\"
+        {question}
+        \"\"\"
 
-    try:
-        response = httpx.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
-
-        return DocumentAnalysis(
-            summary=parsed.get("summary", ""),
-            clauses=[
-                Clause(title=cl.get("title", ""), content=cl.get("content", ""))
-                for cl in parsed.get("clauses", [])
-            ],
-            red_flags=parsed.get("red_flags", [])
-        )
-
-    except Exception as e:
-        print("Error communicating with OpenRouter:", e)
-        return DocumentAnalysis(
-            summary="Error analyzing document.",
-            clauses=[],
-            red_flags=["AI request failed."]
-        )
-
-def ask_ai_about_document(text: str, question: str) -> str:
-    """
-    Submits a question about a document to the AI model.
-
-    Args:
-        text (str): Full document context
-        question (str): User’s legal question
-
-    Returns:
-        str: AI-generated answer or fallback message
-    """
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://yourdomain.com",
-        "X-Title": "LegalLens"
-    }
-
-    prompt = f"""
-You are a legal assistant AI.
-
-Document:
-\"\"\"
-{text}
-\"\"\"
-
-Question:
-\"\"\"
-{question}
-\"\"\"
-
-Answer the user's question clearly and precisely, based on the document above. Maximum 10 lines.
-"""
-
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [{"role": "user", "content": prompt}]
-    }
-
-    try:
-        response = httpx.post(OPENROUTER_BASE_URL, headers=headers, json=payload)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
-
-    except Exception as e:
-        print("Error during AI chat:", e)
-        return "Sorry, I couldn't process your question at this time."
+        Answer the user's question clearly and precisely. Maximum 10 lines.
+        """
+        messages = [{"role": "user", "content": prompt}]
+        response_json = self._send_request(messages)
+        return response_json["choices"][0]["message"]["content"]

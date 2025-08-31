@@ -1,136 +1,118 @@
-"""
-Document Routes Module
+import logging
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
 
-Handles uploading, retrieving, listing, and deleting user documents.
-Includes AI-powered parsing and analysis of PDF content.
-"""
-
-import json
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
-from sqlmodel import Session, select
 from app.db.session import get_session
-from app.auth.deps import get_current_user
+from app.api.deps import get_current_user
+from app.services.document_service import DocumentService
+from app.services.pdf_parser import PDFParserService
+from app.services.ai_engine import AIEngineService
+from app.schemas.document import DocumentSummary, DocumentListItem, DocumentCreate
 from app.models.user import User
-from app.models.document import Document
-from app.services.pdf_parser import extract_text_from_pdf
-from app.services.ai_engine import analyze_text_with_ai
+from app.core.exceptions import (
+    DocumentNotFoundError,
+    DatabaseError,
+    UnsupportedFileTypeError,
+    PDFParseError,
+    AIEngineError,
+)
 
-# Initialize router
-router = APIRouter()
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/documents", tags=["documents"])
 
-@router.post("/document/upload")
-async def upload_file(
+def get_document_service(
+    db: Session = Depends(get_session),
+    pdf_parser_service: PDFParserService = Depends(PDFParserService),
+    ai_engine_service: AIEngineService = Depends(AIEngineService)
+) -> DocumentService:
+    """Provides an instance of DocumentService with its dependencies."""
+    return DocumentService(db, pdf_parser_service, ai_engine_service)
+
+@router.post(
+    "/",
+    response_model=DocumentSummary,
+    status_code=status.HTTP_201_CREATED,
+    summary="Add an analyzed document"
+)
+def add_document(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
+    doc_service: DocumentService = Depends(get_document_service)
 ):
     """
-    Uploads a PDF document, extracts its text, analyzes it using AI,
-    and saves results in the database.
-
-    Returns:
-    - Document metadata and analysis summary
+    Processes a PDF document, analyzes it, and saves it for the current user.
     """
-    content = await file.read()
-    text = extract_text_from_pdf(content)
-    analysis = analyze_text_with_ai(text)
+    try:
+        document = doc_service.create_document(file, current_user.id)
+        return DocumentSummary.model_validate(document)
+    except UnsupportedFileTypeError as e:
+        raise HTTPException(status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail=str(e))
+    except (PDFParseError, AIEngineError) as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except DatabaseError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+    except Exception as e:
+        logger.error(f"Unexpected error in add_document: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred.")
 
-    new_doc = Document(
-        title=file.filename,
-        content=text,
-        summary=analysis.summary,
-        red_flags=json.dumps(analysis.red_flags),
-        clauses=json.dumps([clause.dict() for clause in analysis.clauses]),
-        user_id=current_user.id
-    )
-    session.add(new_doc)
-    session.commit()
 
-    return {
-        "id": new_doc.id,
-        "summary": analysis.summary,
-        "clauses": [clause.dict() for clause in analysis.clauses],
-        "red_flags": analysis.red_flags,
-        "filename": file.filename
-    }
-
-@router.get("/document/{doc_id}")
-def get_document_detail(
+@router.get(
+    "/{doc_id}",
+    response_model=DocumentSummary,
+    summary="Get document details"
+)
+def read_document(
     doc_id: int,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
+    doc_service: DocumentService = Depends(get_document_service)
 ):
     """
-    Retrieves the full details of a specific document, ensuring it belongs to the current user.
+    Retrieves a single document by its ID if it belongs to the current user.
     """
-    doc = session.exec(
-        select(Document).where(
-            Document.id == doc_id,
-            Document.user_id == current_user.id
-        )
-    ).first()
+    try:
+        document = doc_service.get_document_by_id(doc_id, current_user.id)
+        return DocumentSummary.model_validate(document)
+    except DocumentNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except DatabaseError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
-    if not doc:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found or unauthorized"
-        )
 
-    return {
-        "id": doc.id,
-        "title": doc.title,
-        "summary": doc.summary,
-        "content": doc.content,
-        "created_at": doc.created_at,
-        "red_flags": json.loads(doc.red_flags or "[]"),
-        "clauses": json.loads(doc.clauses or "[]")
-    }
-
-@router.get("/documents")
-def get_documents(
+@router.get(
+    "/",
+    response_model=list[DocumentListItem],
+    summary="List user documents"
+)
+def list_documents(
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
+    doc_service: DocumentService = Depends(get_document_service)
 ):
     """
-    Returns a list of all documents belonging to the current user.
-    Includes basic metadata for display.
+    Lists all documents belonging to the current user.
     """
-    docs = session.exec(
-        select(Document).where(Document.user_id == current_user.id)
-    ).all()
+    try:
+        documents = doc_service.list_documents_for_user(current_user.id)
+        return [DocumentListItem.model_validate(doc) for doc in documents]
+    except DatabaseError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
 
-    return [
-        {
-            "id": doc.id,
-            "title": doc.title,
-            "summary": doc.summary,
-            "created_at": doc.created_at
-        }
-        for doc in docs
-    ]
 
-@router.delete("/document/{doc_id}")
-def delete_document(
+@router.delete(
+    "/{doc_id}", 
+    status_code=status.HTTP_204_NO_CONTENT, 
+    summary="Delete document"
+)
+def delete_document_by_id(
     doc_id: int,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
+    doc_service: DocumentService = Depends(get_document_service)
 ):
     """
-    Deletes a document if it belongs to the current user.
+    Deletes a document by its ID if it belongs to the current user.
     """
-    doc = session.exec(
-        select(Document).where(
-            Document.id == doc_id,
-            Document.user_id == current_user.id
-        )
-    ).first()
-
-    if not doc:
-        raise HTTPException(
-            status_code=404,
-            detail="Document not found or unauthorized"
-        )
-
-    session.delete(doc)
-    session.commit()
-    return {"message": "Document deleted successfully"}
+    try:
+        doc_service.delete_document(doc_id, current_user.id)
+    except DocumentNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except DatabaseError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")

@@ -1,191 +1,131 @@
-import { useEffect, useState } from "react";
-import axios from "axios";
+import { useState, useMemo } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { HiDocumentText, HiOutlineChevronRight, HiOutlineTrash } from "react-icons/hi";
+import { useQuery } from "@tanstack/react-query";
+import {
+  HiDocumentText,
+  HiOutlineTrash
+} from "react-icons/hi";
 
-import PageHeader from "../../components/PageHeader";
+import type { Document } from "../../types/document";
+import { useDeleteDocument } from "../../hooks/useDeleteDocument";
+import { apiFetch } from "../../lib/apiFetch";
 import UploadDocumentModal from "../../components/UploadDocumentModal";
-import toast from "react-hot-toast";
-
-// Document data type
-type Doc = {
-  id: string;
-  title: string;
-  content: string;
-  summary: string;
-  red_flags: string[];
-  clauses: string[];
-  created_at: string;
-};
 
 /**
  * DocumentList component
  * Displays a searchable list of uploaded documents with delete and upload functionality.
  */
 export default function DocumentList() {
-  const [documents, setDocuments] = useState<Doc[]>([]);
-  const [filtered, setFiltered] = useState<Doc[]>([]);
   const [search, setSearch] = useState("");
-  const [error, setError] = useState("");
   const [showModal, setShowModal] = useState(false);
-
   const navigate = useNavigate();
 
-  // Fetch documents from API when component mounts
-  useEffect(() => {
-    const fetchDocuments = async () => {
-      try {
-        const token = localStorage.getItem("token");
-        const { data } = await axios.get<Doc[]>("http://localhost:8000/documents", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setDocuments(data);
-        setFiltered(data);
-      } catch (err: any) {
-        setError("Failed to fetch documents");
-      }
-    };
+  // Re-use the custom hook for document deletion
+  const { deleteDocument, isDeleting } = useDeleteDocument();
 
-    fetchDocuments();
-  }, []);
+  // Fetch documents using TanStack Query for caching and state management
+  const {
+    data: documents,
+    isLoading,
+    isError,
+  } = useQuery<Document[]>({
+    queryKey: ["documents"],
+    queryFn: async () => {
+      // Use the streamlined apiFetch.get() to leverage the centralized configuration
+      const { data } = await apiFetch.get("/documents");
+      return data;
+    },
+  });
 
-  // Filter documents when the search input or document list changes
-  useEffect(() => {
+  const filteredDocuments = useMemo(() => {
+    if (!documents) return [];
     const term = search.toLowerCase();
-    setFiltered(
-      documents.filter(
-        (d) =>
-          d.title.toLowerCase().includes(term) ||
-          d.summary.toLowerCase().includes(term)
-      )
+    return documents.filter(
+      (doc) =>
+        doc.title.toLowerCase().includes(term) ||
+        doc.summary.toLowerCase().includes(term)
     );
   }, [search, documents]);
 
-  // Callback for successful document upload
+  // Callback for a successful document upload
   const handleUploadComplete = (docId: string) => {
     console.log("Redirecting to:", `/dashboard/doc/${docId}`);
     setShowModal(false);
     navigate(`/dashboard/doc/${docId}`);
   };
 
-  // Handle deletion of a document with undo option
   const handleDelete = (docId: string) => {
-    const deleted = documents.find((doc) => doc.id === docId);
-    if (!deleted) return;
+    deleteDocument(docId);
+  };
 
-    setDocuments((prev) => prev.filter((doc) => doc.id !== docId));
-    let wasUndone = false;
-
-    toast(
-      (t) => (
-        <div className="flex items-center justify-between space-x-2">
-          <span className="text-sm text-gray-800">
-            ⏳ Deleting document: <strong>{deleted.title}</strong>
-          </span>
-          <button
-            onClick={() => {
-              wasUndone = true;
-              setDocuments((prev) => [deleted, ...prev]);
-              toast.dismiss(t.id);
-            }}
-            className="text-blue-600 text-sm font-medium hover:underline"
-          >
-            Undo
-          </button>
-        </div>
-      ),
-      { duration: 5000 }
+  if (isLoading) {
+    return (
+      <p className="text-gray-500 text-center mt-8 text-lg">
+        Loading documents...
+      </p>
     );
+  }
 
-    // Delay actual deletion to allow undo
-    setTimeout(async () => {
-      if (!wasUndone) {
-        try {
-          const token = localStorage.getItem("token");
-          await axios.delete(`http://localhost:8000/document/${docId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          toast.success(`Document "${deleted.title}" deleted`);
-        } catch (err) {
-          toast.error(`Failed to delete "${deleted.title}"`);
-          setDocuments((prev) => [deleted, ...prev]);
-        }
-      }
-    }, 5000);
-  };
-
-  // Show error message if fetching documents failed
-  if (error) {
-    return <p className="text-red-600 text-center mt-6">{error}</p>;
+  if (isError) {
+    return (
+      <p className="text-red-600 text-center mt-8 text-lg">
+        Failed to fetch documents.
+      </p>
+    );
   }
 
   return (
-    <article className="space-y-6">
-      <PageHeader
-        title="Your Documents"
-        searchInput={
-          <input
-            type="text"
-            placeholder="Search documents..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-64 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ml-auto"
-          />
-        }
-      />
+    <section className="space-y-8">
+      {/* Search and upload section */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="border border-blue-200 rounded-lg px-4 py-2 w-full sm:w-72 shadow focus:ring-2 focus:ring-blue-400 focus:outline-none bg-white"
+          placeholder="Search documents..."
+        />
+        <button
+          onClick={() => setShowModal(true)}
+          className="bg-blue-600 text-white px-5 py-2 rounded-full shadow hover:bg-blue-700 transition font-semibold text-base"
+        >
+          <HiDocumentText className="w-5 h-5 inline-block mr-2" />
+          Upload Document
+        </button>
+      </div>
 
-      {/* Handle empty or no search result states */}
-      {documents.length === 0 ? (
-        <p className="text-gray-500 text-center">
-          You haven't uploaded any documents yet.
-        </p>
-      ) : filtered.length === 0 ? (
-        <p className="text-gray-500 text-center">
-          No results found for “{search}”.
-        </p>
+      {/* Message if no documents are uploaded */}
+      {filteredDocuments.length === 0 ? (
+        <div className="bg-white rounded-2xl shadow-lg border border-blue-100 p-8 text-center text-gray-500">
+          <HiDocumentText className="w-12 h-12 mx-auto mb-4 text-blue-200" />
+          <h3 className="text-xl font-semibold mb-2">No documents uploaded</h3>
+          <p className="mb-4">Upload your first document to start legal analysis.</p>
+        </div>
       ) : (
-        <ul className="space-y-4">
-          {filtered.map((doc) => (
-            <li key={doc.id} className="relative group">
-              <Link
-                to={`doc/${doc.id}`}
-                className="flex items-center gap-4 p-4 bg-white border border-gray-200 rounded-lg shadow-sm hover:shadow-md transition"
-              >
-                <HiDocumentText className="text-2xl text-blue-600 flex-shrink-0" />
-                <div className="flex-1">
-                  <h2 className="text-sm sm:text-base font-semibold text-gray-800 truncate sm:truncate-none max-w-full sm:max-w-none">
-                    {doc.title}
-                  </h2>
-                  <p className="text-sm text-gray-500">
-                    Uploaded: {new Date(doc.created_at).toLocaleString()}
-                  </p>
-                  <p className="mt-1 text-gray-700 text-sm line-clamp-2">
-                    {doc.summary}
-                  </p>
+        <ul className="divide-y divide-blue-100 bg-white rounded-2xl shadow-lg border border-blue-100">
+          {filteredDocuments.map((doc) => (
+            <li
+              key={doc.id}
+              className="flex items-center justify-between px-6 py-5 hover:bg-blue-50 transition rounded-xl"
+            >
+              <Link to={`/dashboard/doc/${doc.id}`} className="flex-1 min-w-0 flex items-center gap-4">
+                <HiDocumentText className="text-blue-500 w-7 h-7 flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-semibold text-gray-800 text-lg truncate">{doc.title}</h3>
+                  <p className="text-sm text-gray-600 truncate">{doc.summary}</p>
                 </div>
-                <HiOutlineChevronRight className="text-xl text-gray-400" />
               </Link>
-
-              {/* Delete button visible on hover */}
               <button
-                onClick={() => handleDelete(doc.id)}
-                className="absolute top-2 right-2 text-gray-300 group-hover:text-red-500 transition"
-                title="Delete document"
+                onClick={() => handleDelete(String(doc.id))}
+                disabled={isDeleting}
+                className="ml-4 bg-red-600 text-white px-4 py-2 rounded-full shadow hover:bg-red-700 transition font-semibold text-base disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <HiOutlineTrash className="text-xl" />
+                <HiOutlineTrash className="w-5 h-5" />
               </button>
             </li>
           ))}
         </ul>
       )}
-
-      {/* Floating button to upload a new document */}
-      <button
-        onClick={() => setShowModal(true)}
-        className="fixed bottom-6 right-6 bg-blue-600 text-white px-4 py-3 rounded-full shadow-lg hover:bg-blue-700 z-50"
-      >
-        Upload Document
-      </button>
 
       {/* Upload modal */}
       {showModal && (
@@ -194,6 +134,6 @@ export default function DocumentList() {
           onComplete={handleUploadComplete}
         />
       )}
-    </article>
+    </section>
   );
 }
